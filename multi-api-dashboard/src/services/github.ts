@@ -17,3 +17,10 @@ export async function getUser(username: string){
 export async function getRepos(username: string, perPage=12){
   return httpGet<GitHubRepo[]>(`https://api.github.com/users/${encodeURIComponent(username)}/repos?sort=updated&per_page=${perPage}`, { cacheKey: `gh:repos:${username}:${perPage}` });
 }
+
+/** 레포 배열에서 언어 목록 만들기 */
+export function collectLanguages(repos: GitHubRepo[]){
+  const set = new Set<string>();
+  repos.forEach(r => { if (r.language) set.add(r.language); });
+  return Array.from(set).sort((a,b)=>a.localeCompare(b));
+}
