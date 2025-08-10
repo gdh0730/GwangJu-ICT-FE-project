@@ -7,7 +7,7 @@ import Toast from './components/Toast';
 import useLocalStorage from './hooks/useLocalStorage';
 import { collectLanguages, getRepos, getUser, GitHubRepo, GitHubUser } from './services/github';
 import { Article, getHeadlines } from './services/news';
-import { geocodeMany, getWeather } from './services/weather';
+import { codeToIcon, geocodeMany, getWeather, WeatherResp } from './services/weather';
 import { downloadCSV } from './utils/csv';
 
 type TabKey = 'github' | 'weather' | 'news';
@@ -99,17 +99,6 @@ function GitHubPanel() {
             {langs.map(l => <option key={l} value={l}>{l}</option>)}
           </select>
         </div>
-        <div className="card control" style={{ flex: '1 1 240px' }}>
-          <input className="input" placeholder="레포지토리 검색…" value={query} onChange={e => setQuery(e.target.value)} />
-        </div>
-        {repos && repos.length > 0 &&
-          <div className="card control" style={{ width: 130, display: 'grid', placeItems: 'center' }}>
-            <button className="btn" onClick={() => downloadCSV(
-              filteredSorted.map(r => ({ name: r.name, stars: r.stargazers_count, forks: r.forks_count, watchers: r.watchers_count, language: r.language, updated_at: r.updated_at, url: r.html_url })),
-              `${user!.login}-repos.csv`
-            )}>CSV 내보내기</button>
-          </div>
-        }
       </div>
 
       {err && <Toast message={err} type="error" />}
@@ -144,29 +133,38 @@ function GitHubPanel() {
           </Card>
 
           <Card>
-            <h3 style={{ marginTop: 0 }}>Repositories</h3>
-            <div className="grid" style={{ marginTop: 12 }}>
+            <div className="section">
+              <div className="section-title">Repositories</div>
+              {repos && repos.length > 0 && (
+                <button className="btn" onClick={() => downloadCSV(
+                  filteredSorted.map(r => ({ name: r.name, stars: r.stargazers_count, forks: r.forks_count, watchers: r.watchers_count, language: r.language, updated_at: r.updated_at, url: r.html_url })),
+                  `${user!.login}-repos.csv`
+                )}>CSV 내보내기</button>
+              )}
+            </div>
+            <div className="divider"></div>
+
+            <div className="list">
               {filteredSorted.map(repo => (
-                <div key={repo.id} className="card">
-                  <div style={{ fontWeight: 600, marginBottom: 6 }}>
-                    <a href={repo.html_url} target="_blank" style={{ color: 'inherit' }}>{repo.name}</a>
-                  </div>
-                  <div style={{ color: 'var(--muted)', marginBottom: 8 }}>{repo.description || '—'}</div>
-                  <div className="pills" style={{ justifyContent: 'space-between' }}>
-                    <div style={{ display: 'flex', gap: 8 }}>
+                <div key={repo.id} className="list-item">
+                  <div>
+                    <div className="title">
+                      <a href={repo.html_url} target="_blank" style={{ color: 'inherit' }}>{repo.name}</a>
+                    </div>
+                    <div className="desc">{repo.description || '—'}</div>
+                    <div className="meta">
                       <span className="pill">⭐ {repo.stargazers_count}</span>
                       <span className="pill">🍴 {repo.forks_count}</span>
                       <span className="pill">👀 {repo.watchers_count}</span>
-                      {repo.language && <span className="pill">{repo.language}</span>}
+                      {repo.language && <span className="pill ghost">{repo.language}</span>}
                     </div>
-                    <span style={{ color: 'var(--muted)' }}>
-                      {new Date(repo.updated_at).toLocaleDateString()}
-                    </span>
                   </div>
+                  <div className="side">{new Date(repo.updated_at).toLocaleDateString()}</div>
                 </div>
               ))}
             </div>
           </Card>
+
         </div>
       )}
     </>
@@ -174,7 +172,6 @@ function GitHubPanel() {
 }
 
 /* ---------------- Weather ---------------- */
-
 function WeatherPanel() {
   const [city, setCity] = useLocalStorage('wx:city', 'Seoul');
   const [unit, setUnit] = useLocalStorage<'c' | 'f'>('wx:unit', 'c');
@@ -183,6 +180,7 @@ function WeatherPanel() {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [data, setData] = useState<{ name: string; country: string; temp?: number; wind?: number; days?: { date: string; tmax: number; tmin: number }[] } | null>(null);
+  const [wx, setWx] = useState<WeatherResp | null>(null);
 
   async function search() {
     if (!city.trim()) return;
@@ -204,15 +202,22 @@ function WeatherPanel() {
   }
 
   async function fetchWx(lat: number, lon: number, name: string, country: string) {
-    const wx = await getWeather(lat, lon, unit);
+    const resp = await getWeather(lat, lon, unit);
+    setWx(resp);
     setData({
       name, country,
-      temp: wx.current?.temperature_2m, wind: wx.current?.wind_speed_10m,
-      days: wx.daily ? wx.daily.time.map((d, i) => ({ date: d, tmax: wx.daily!.temperature_2m_max[i], tmin: wx.daily!.temperature_2m_min[i] })) : []
+      temp: resp.current?.temperature_2m,
+      wind: resp.current?.wind_speed_10m,
+      days: resp.daily ? resp.daily.time.map((d, i) => ({
+        date: d,
+        tmax: resp.daily!.temperature_2m_max[i],
+        tmin: resp.daily!.temperature_2m_min[i],
+      })) : [],
     });
   }
 
-  useEffect(() => { search(); }, [unit]); // 단위 변경시 재조회
+  // ✅ useEffect는 컴포넌트 최상위에서
+  useEffect(() => { search(); }, [unit]);
 
   return (
     <>
@@ -221,7 +226,8 @@ function WeatherPanel() {
           <div className="icon-input">
             <span className="ic">🔎</span>
             <input className="input" placeholder="도시 검색 (Seoul, Tokyo…)"
-              value={city} onChange={e => setCity(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') search(); }} />
+              value={city} onChange={e => setCity(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') search(); }} />
           </div>
         </div>
 
@@ -251,19 +257,50 @@ function WeatherPanel() {
       {data && (
         <div className="row">
           <Card>
-            <h3 style={{ marginTop: 0 }}>{data.name}, {data.country}</h3>
-            <div className="grid" style={{ marginTop: 8 }}>
-              <Stat k="현재 기온" v={`${data.temp ?? '–'}°`} />
-              <Stat k="풍속" v={`${data.wind ?? '–'} m/s`} />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              {(() => {
+                const c = (wx?.current?.weather_code ?? 0);
+                const d = (wx?.current?.is_day ?? 1) === 1;
+                const { icon, desc } = codeToIcon(c, d);
+                return <><span className="wx-emoji">{icon}</span><h3 style={{ margin: 0 }}>{data.name}, {data.country} · {desc}</h3></>;
+              })()}
+            </div>
+            <div className="wx-badges">
+              <span className="wx-badge">체감 {wx?.current?.apparent_temperature ?? '–'}°</span>
+              <span className="wx-badge">습도 {wx?.current?.relative_humidity_2m ?? '–'}%</span>
+              <span className="wx-badge">기압 {wx?.current?.pressure_msl ?? '–'} hPa</span>
+              <span className="wx-badge">구름 {wx?.current?.cloud_cover ?? '–'}%</span>
+              <span className="wx-badge">강수 {wx?.current?.precipitation ?? 0} mm</span>
+              <span className="wx-badge">돌풍 {wx?.current?.wind_gusts_10m ?? '–'} m/s</span>
+              <span className="wx-badge">풍속 {wx?.current?.wind_speed_10m ?? '–'} m/s · {wx?.current?.wind_direction_10m ?? '–'}°</span>
             </div>
           </Card>
+
           <Card>
-            <h3 style={{ marginTop: 0 }}>7일 예보</h3>
-            <div className="grid" style={{ marginTop: 10 }}>
-              {data.days?.map(d => (
-                <div key={d.date} className="card">
-                  <div style={{ color: 'var(--muted)' }}>{new Date(d.date).toLocaleDateString()}</div>
-                  <div style={{ fontWeight: 700 }}>▲ {d.tmax}°  ▼ {d.tmin}°</div>
+            <div className="section"><div className="section-title">7일 예보</div></div>
+            <div className="divider"></div>
+
+            {/* 암시적 any 방지: date, i 타입 명시 */}
+            <div className="list">
+              {wx?.daily?.time.map((date: string, i: number) => (
+                <div key={date} className="list-item">
+                  <div>
+                    <div className="title">{new Date(date).toLocaleDateString()}</div>
+                    <div className="meta" style={{ gap: 10 }}>
+                      <span className="pill">🌅 {wx?.daily?.sunrise?.[i] ? new Date(wx!.daily!.sunrise[i]).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}</span>
+                      <span className="pill">🌇 {wx?.daily?.sunset?.[i] ? new Date(wx!.daily!.sunset[i]).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}</span>
+                      <span className="pill">UV {wx!.daily!.uv_index_max[i] ?? '–'}</span>
+                      <span className="pill">강수확률 {wx!.daily!.precipitation_probability_max[i] ?? 0}%</span>
+                      <span className="pill">강수량 {wx!.daily!.precipitation_sum[i] ?? 0} mm</span>
+                      <span className="pill">바람 {wx!.daily!.wind_speed_10m_max[i] ?? '–'} m/s</span>
+                      <span className="pill">돌풍 {wx!.daily!.wind_gusts_10m_max[i] ?? '–'} m/s</span>
+                    </div>
+                  </div>
+                  <div className="side">
+                    <span className="temp-up">▲ {wx!.daily!.temperature_2m_max[i]}°</span>
+                    &nbsp;&nbsp;
+                    <span className="temp-down">▼ {wx!.daily!.temperature_2m_min[i]}°</span>
+                  </div>
                 </div>
               ))}
             </div>
@@ -275,7 +312,6 @@ function WeatherPanel() {
 }
 
 /* ---------------- News ---------------- */
-
 function NewsPanel() {
   const [q, setQ] = useLocalStorage('news:q', 'technology');
   const [lang, setLang] = useLocalStorage('news:lang', 'en');
@@ -302,14 +338,9 @@ function NewsPanel() {
         <div className="card control" style={{ flex: '1 1 360px' }}>
           <div className="icon-input">
             <span className="ic">🔍</span>
-            <input className="input" placeholder="키워드 (예: 인공지능)" value={q}
+            <input className="input" placeholder="키워드 (예: AI)" value={q}
               onChange={e => setQ(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') search(); }} />
           </div>
-        </div>
-        <div className="card control" style={{ width: 140 }}>
-          <select className="select" value={lang} onChange={e => setLang(e.target.value)}>
-            <option value="ko">ko</option><option value="en">en</option><option value="ja">ja</option><option value="de">de</option><option value="fr">fr</option>
-          </select>
         </div>
         <div className="card control" style={{ width: 180 }}>
           <select className="select" value={sortBy} onChange={e => setSortBy(e.target.value as any)}>
@@ -317,6 +348,8 @@ function NewsPanel() {
             <option value="popularity">인기순</option>
           </select>
         </div>
+      </div>
+      <div className="controls-row">
         <div className="card control" style={{ width: 170 }}>
           <input className="select" type="date" value={from} onChange={e => setFrom(e.target.value)} title="From" />
         </div>
@@ -332,19 +365,26 @@ function NewsPanel() {
       {loading && <div className="grid" style={{ marginTop: 12 }}>{Array.from({ length: 9 }).map((_, i) => <div key={i} className="skel" style={{ height: 110 }} />)}</div>}
 
       {arts && (
-        <div className="grid">
-          {arts.map((a, i) => (
-            <div key={i} className="card">
-              <div style={{ fontWeight: 600, marginBottom: 6 }}>
-                <a href={a.url} target="_blank" style={{ color: 'inherit' }}>{a.title}</a>
+        <>
+          <div className="section"><div className="section-title">검색 결과</div></div>
+          <div className="divider"></div>
+          <div className="list">
+            {arts.map((a, i) => (
+              <div key={i} className="list-item">
+                <div>
+                  <div className="title">
+                    <a href={a.url} target="_blank" style={{ color: 'inherit' }}>{a.title}</a>
+                  </div>
+                  <div className="desc">{a.description ?? '—'}</div>
+                  <div className="meta">
+                    <span className="pill ghost">{a.source?.name}</span>
+                  </div>
+                </div>
+                <div className="side">{new Date(a.publishedAt).toLocaleString()}</div>
               </div>
-              <div style={{ color: 'var(--muted)', marginBottom: 8 }}>
-                {a.source?.name} · {new Date(a.publishedAt).toLocaleString()}
-              </div>
-              <div>{a.description}</div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        </>
       )}
     </>
   );
