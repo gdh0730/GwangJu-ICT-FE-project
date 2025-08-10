@@ -1,1 +1,1 @@
-# ict-project
+# GwangJu-ICT-FE-project
